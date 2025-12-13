@@ -1,5 +1,3 @@
-# src/rag_chain.py
-
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -31,9 +29,12 @@ Question:
         api_key=get_openai_key(),
     )
 
-    rag_chain = (
+    def format_docs(docs):
+        return "\n\n".join(d.page_content for d in docs)
+
+    base_chain = (
         {
-            "context": retriever,
+            "context": retriever | format_docs,
             "question": RunnablePassthrough(),
         }
         | prompt
@@ -41,4 +42,14 @@ Question:
         | StrOutputParser()
     )
 
-    return rag_chain
+    # 🔑 NEW: wrapper that returns sources
+    def rag_with_sources(question: str):
+        docs = retriever.invoke(question)
+        answer = base_chain.invoke(question)
+
+        return {
+            "answer": answer,
+            "sources": docs
+        }
+
+    return rag_with_sources
