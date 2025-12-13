@@ -2,6 +2,8 @@ import sys
 import os
 import streamlit as st
 
+st.write("DEBUG → OPENAI_API_KEY:", os.getenv("OPENAI_API_KEY"))
+
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR) 
