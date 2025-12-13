@@ -26,7 +26,7 @@ Question:
     llm = ChatOpenAI(
         model="gpt-4o-mini",
         temperature=0.2,
-        api_key=get_openai_key(),
+        api_key=os.getenv("OPENAI_API_KEY"),
     )
 
     def format_docs(docs):

@@ -1,7 +1,14 @@
+import os
 from langchain_openai import OpenAIEmbeddings
-from .config import get_openai_key
+
 
 def get_embeddings():
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is missing at runtime")
+
     return OpenAIEmbeddings(
-        api_key=get_openai_key()
+        model="text-embedding-3-small",
+        api_key=api_key,   # 👈 EXPLICIT
     )
