@@ -3,19 +3,29 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 import os
-
-
 from .config import get_openai_key
 
 
+
+
+
 def create_rag_chain(vectorstore):
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",   # ✅ STRING — QUOTES REQUIRED
+        temperature=0.2,
+        api_key=os.getenv("OPENAI_API_KEY"),
+        base_url="https://api.openai.com/v1",
+    )
+
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
 
-    prompt = ChatPromptTemplate.from_template(
-        """
+    def rag_with_sources(question: str):
+        docs = retriever.invoke(question)
+        context = "\n\n".join(d.page_content for d in docs)
+
+        prompt = f"""
 You are a helpful assistant.
-Answer the question using ONLY the context below.
-If the answer is not in the context, say "I don't know".
+Use the following context to answer the question.
 
 Context:
 {context}
@@ -23,35 +33,11 @@ Context:
 Question:
 {question}
 """
-    )
 
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0.2,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-
-    def format_docs(docs):
-        return "\n\n".join(d.page_content for d in docs)
-
-    base_chain = (
-        {
-            "context": retriever | format_docs,
-            "question": RunnablePassthrough(),
-        }
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-
-    # 🔑 NEW: wrapper that returns sources
-    def rag_with_sources(question: str):
-        docs = retriever.invoke(question)
-        answer = base_chain.invoke(question)
-
+        answer = llm.invoke(prompt)
         return {
-            "answer": answer,
-            "sources": docs
+            "answer": answer.content,
+            "sources": docs,
         }
 
     return rag_with_sources
