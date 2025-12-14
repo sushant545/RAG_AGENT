@@ -1,5 +1,19 @@
+# Secrets
+.env
+*.key
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Data
+data/uploads/
+data/
+
+# Python
 .venv/
 __pycache__/
-.env
-data/uploads/
-.ipynb_checkpoints/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db

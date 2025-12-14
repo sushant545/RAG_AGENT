@@ -1,136 +1,210 @@
-import sys
 import os
+import sys
+import time
 import streamlit as st
 
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR) 
-
-from src.pdf_snapshot import generate_highlight_snapshot
+# -------------------------------------------------------------------
+# Path setup
+# -------------------------------------------------------------------
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
 # -------------------------------------------------------------------
-# Imports from src
+# Imports
 # -------------------------------------------------------------------
 from src.loader import load_and_split_pdf
 from src.vectorstore import create_vectorstore
 from src.rag_chain import create_rag_chain
+from src.vision_locator import locate_evidence
+from src.pdf_snapshot import render_highlight
 
 # -------------------------------------------------------------------
 # Constants
 # -------------------------------------------------------------------
 UPLOAD_DIR = "data/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # -------------------------------------------------------------------
-# Streamlit page config
+# Page config
 # -------------------------------------------------------------------
-st.set_page_config(page_title="PDF RAG Chat", layout="wide")
-st.title("📄 Chat with your PDFs")
+st.set_page_config(
+    page_title="Chat With Your PDF",
+    page_icon="📄",
+    layout="wide",
+)
+
+st.title("📄 Chat With Your PDF")
+st.caption(
+    "Ask questions • Get answers • Attach visual proof directly to audit reports"
+)
 
 # -------------------------------------------------------------------
-# Session state initialization
+# Session state
 # -------------------------------------------------------------------
 if "rag_chain" not in st.session_state:
     st.session_state.rag_chain = None
+
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = None
 
 if "history" not in st.session_state:
     st.session_state.history = []
 
 # -------------------------------------------------------------------
-# Sidebar — Question History
+# Sidebar — History
 # -------------------------------------------------------------------
 st.sidebar.title("📜 Question History")
 
 if st.session_state.history:
     for i, item in enumerate(st.session_state.history, 1):
         with st.sidebar.expander(f"Q{i}: {item['question']}"):
-            st.write("**Answer:**")
+            st.markdown("**Answer**")
             st.write(item["answer"])
+
+            st.markdown("**Evidence**")
+            for ev in item["evidence"]:
+                img = render_highlight(
+                    ev["pdf_path"],
+                    ev["page"],
+                    ev["bbox"],
+                )
+                st.image(img, use_container_width=True)
+                st.caption(
+                    f"Page {ev['page'] + 1} · "
+                    f"Confidence {int(ev['confidence'] * 100)}%"
+                )
 else:
-    st.sidebar.write("No questions asked yet.")
+    st.sidebar.info("No questions asked yet.")
 
 # -------------------------------------------------------------------
-# File upload (MULTIPLE PDFs)
+# Section 1 — Upload Documents
 # -------------------------------------------------------------------
+st.markdown("## 📂 Upload Documents")
+
 uploaded_files = st.file_uploader(
-    "Upload one or more PDFs",
+    "Upload one or more PDF documents",
     type=["pdf"],
-    accept_multiple_files=True
+    accept_multiple_files=True,
 )
 
 if uploaded_files:
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    progress = st.progress(0)
+    status = st.empty()
+
     all_docs = []
+    total = len(uploaded_files)
 
-    with st.spinner("Processing documents..."):
-        for uploaded_file in uploaded_files:
-            pdf_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
+    with st.spinner("Indexing documents…"):
+        for idx, file in enumerate(uploaded_files, 1):
+            status.info(f"Processing **{file.name}**")
+            time.sleep(0.15)  # UX smoothing
 
-            # Save PDF to disk
+            pdf_path = os.path.join(UPLOAD_DIR, file.name)
             with open(pdf_path, "wb") as f:
-                f.write(uploaded_file.read())
+                f.write(file.read())
 
-            # Load and split
             try:
                 docs = load_and_split_pdf(pdf_path)
                 all_docs.extend(docs)
+            except Exception as e:
+                st.error(f"{file.name}: {e}")
 
-            except ValueError as e:
-                st.error(str(e))
-                continue
+            progress.progress(idx / total)
 
-    # Guard: no valid documents
-    if not all_docs:
-        st.error(
-            "No readable text found in the uploaded PDFs.\n\n"
-            "Possible reasons:\n"
-            "- PDFs are encrypted\n"
-            "- PDFs are scanned images\n"
-            "- PDFs contain no extractable text"
+        status.success("All documents processed")
+
+    if all_docs:
+        st.session_state.vectorstore = create_vectorstore(all_docs)
+        st.session_state.rag_chain = create_rag_chain(
+            st.session_state.vectorstore
         )
+        st.success(f"✅ {len(uploaded_files)} document(s) indexed successfully")
     else:
-        vectorstore = create_vectorstore(all_docs)
-        st.session_state.rag_chain = create_rag_chain(vectorstore)
-        st.success(f"{len(uploaded_files)} document(s) indexed successfully!")
+        st.error("No readable text found in uploaded PDFs")
 
 # -------------------------------------------------------------------
-# Question input & answering (PHASE 2: STRING OUTPUT ONLY)
+# Section 2 — Search (ALWAYS VISIBLE)
 # -------------------------------------------------------------------
-if st.session_state.rag_chain:
-    st.markdown("---")
-    question = st.text_input("Ask a question from the documents")
+st.markdown("---")
+st.markdown("## 🔍 Ask Questions?")
 
-    if question:
-        with st.spinner("Thinking..."):
+search_col, button_col = st.columns([5, 1])
+
+with search_col:
+    question = st.text_input(
+        "Ask a question",
+        placeholder="e.g. What is my gross salary?",
+        label_visibility="collapsed",
+    )
+
+with button_col:
+    search_clicked = st.button(
+        "Search",
+        use_container_width=True,
+    )
+
+# -------------------------------------------------------------------
+# Search execution
+# -------------------------------------------------------------------
+if search_clicked:
+    if not question.strip():
+        st.warning("Please enter a question before searching.")
+    elif not st.session_state.rag_chain:
+        st.warning("Please upload and index documents before searching.")
+    else:
+        with st.spinner("Analyzing documents and validating evidence…"):
             result = st.session_state.rag_chain(question)
 
-        answer = result["answer"]
-        sources = result["sources"]
+        st.markdown("### ✅ Answer")
+        st.write(result["answer"])
 
-        # Save to history (NOW includes sources)
-        st.session_state.history.append({
-            "question": question,
-            "answer": answer,
-            "sources": sources
-        })
+        st.markdown("### 📌 Supporting Evidence")
 
-        st.write("### Answer")
-        st.write(answer)
+        evidence_items = []
 
-        # 🔎 Evidence section
-        st.write("### 📌 Evidence from documents")
+        for doc in result["candidate_docs"]:
+            pdf_path = doc.metadata["source"]
+            page = doc.metadata["page"]
 
-        for i, doc in enumerate(sources, 1):
-            pdf_path = doc.metadata.get("source")
-            page_number = doc.metadata.get("page", 0)
-            text_snippet = doc.page_content[:300]  # limit search length
+            try:
+                box = locate_evidence(
+                    pdf_path,
+                    page,
+                    question,
+                    result["answer"],
+                )
 
-            with st.expander(f"Source {i} — Page {page_number + 1}"):
-                try:
-                    image = generate_highlight_snapshot(
-                        pdf_path=pdf_path,
-                        page_number=page_number,
-                        highlight_text=text_snippet,
-                    )
-                    st.image(image, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Could not generate snapshot: {e}")
+                img = render_highlight(
+                    pdf_path,
+                    page,
+                    box,
+                )
+
+                st.image(img, use_container_width=True)
+                st.caption(
+                    f"Page {page + 1} · "
+                    f"Confidence {int(box['confidence'] * 100)}%"
+                )
+
+                evidence_items.append(
+                    {
+                        "pdf_path": pdf_path,
+                        "page": page,
+                        "bbox": box,
+                        "confidence": box["confidence"],
+                    }
+                )
+
+            except Exception as e:
+                st.error(f"Failed to generate evidence: {e}")
+
+        # Save to history (audit-safe)
+        if evidence_items:
+            st.session_state.history.append(
+                {
+                    "question": question,
+                    "answer": result["answer"],
+                    "evidence": evidence_items,
+                }
+            )

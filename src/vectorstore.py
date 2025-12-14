@@ -1,5 +1,3 @@
-# src/vectorstore.py
-
 from langchain_community.vectorstores import FAISS
 from .embeddings import get_embeddings
 

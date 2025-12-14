@@ -1,31 +1,23 @@
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 import os
-from .config import get_openai_key
-
-
-
 
 
 def create_rag_chain(vectorstore):
     llm = ChatOpenAI(
-        model="gpt-4o-mini",   # ✅ STRING — QUOTES REQUIRED
+        model="gpt-4o-mini",
         temperature=0.2,
         api_key=os.getenv("OPENAI_API_KEY"),
-        base_url="https://api.openai.com/v1",
     )
 
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
 
-    def rag_with_sources(question: str):
+    def run(question: str):
         docs = retriever.invoke(question)
         context = "\n\n".join(d.page_content for d in docs)
 
         prompt = f"""
 You are a helpful assistant.
-Use the following context to answer the question.
+Answer the question using the context.
 
 Context:
 {context}
@@ -34,10 +26,11 @@ Question:
 {question}
 """
 
-        answer = llm.invoke(prompt)
+        answer = llm.invoke(prompt).content
+
         return {
-            "answer": answer.content,
-            "sources": docs,
+            "answer": answer,
+            "candidate_docs": docs  # 👈 pages only, no highlighting yet
         }
 
-    return rag_with_sources
+    return run
